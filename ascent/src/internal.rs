@@ -3,9 +3,14 @@
 
 pub use crate::convert::*;
 
-use std::{collections::{HashMap, HashSet}, hash::{BuildHasherDefault, Hash}, time::{Duration, Instant}};
+#[cfg(feature = "profiling")]
+use std::time::{Duration, Instant};
+use std::{
+   collections::{HashMap, HashSet},
+   hash::{BuildHasherDefault, Hash},
+};
 
-use ascent_base::{Lattice};
+use ascent_base::Lattice;
 use nohash_hasher::BuildNoHashHasher;
 use rustc_hash::FxHasher;
 
@@ -18,27 +23,29 @@ pub type RelFullIndexType<K> = HashBrownRelFullIndexType<K>;
 
 pub type RelNoIndexType = Vec<usize>;
 
-pub trait RelIndexTrait{
+pub trait RelIndexTrait {
    type Key;
    fn move_index_contents(from: &mut Self, to: &mut Self);
    fn index_insert(ind: &mut Self, key: Self::Key, tuple_index: usize);
 }
 
-pub trait RelFullIndexTrait : Default {
+pub trait RelFullIndexTrait: Default {
    type Key: Clone;
    /// if an entry for `key` does not exsit, inserts `v` for it and returns true.
    fn insert_if_not_present(&mut self, key: &Self::Key, v: usize) -> bool;
 }
 
+#[cfg(feature = "profiling")]
+pub static mut MOVE_REL_INDEX_CONTENTS_TOTAL_TIME: Duration = Duration::ZERO;
+#[cfg(feature = "profiling")]
+pub static mut INDEX_INSERT_TOTAL_TIME: Duration = Duration::ZERO;
 
-pub static mut MOVE_REL_INDEX_CONTENTS_TOTAL_TIME : Duration = Duration::ZERO;
-pub static mut INDEX_INSERT_TOTAL_TIME : Duration = Duration::ZERO;
-
-impl<K: Eq + Hash> RelIndexTrait for RelIndexType<K>{
+impl<K: Eq + Hash> RelIndexTrait for RelIndexType<K> {
    type Key = K;
 
    #[inline(always)]
    fn move_index_contents(from: &mut RelIndexType<K>, to: &mut RelIndexType<K>) {
+      #[cfg(feature = "profiling")]
       let before = Instant::now();
       if from.len() > to.len() {
          std::mem::swap(from, to);
@@ -52,12 +59,13 @@ impl<K: Eq + Hash> RelIndexTrait for RelIndexType<K>{
                   std::mem::swap(&mut v, existing);
                }
                existing.append(&mut v);
-            },
+            }
             Vacant(vacant) => {
                vacant.insert(v);
-            },
+            }
          }
       }
+      #[cfg(feature = "profiling")]
       unsafe {
          MOVE_REL_INDEX_CONTENTS_TOTAL_TIME += before.elapsed();
       }
@@ -68,9 +76,11 @@ impl<K: Eq + Hash> RelIndexTrait for RelIndexType<K>{
       // let before = Instant::now();
       // hm.entry(key).or_insert_with(|| Vec::with_capacity(8)).push(tuple_index);
       use std::collections::hash_map::Entry::*;
-      match hm.entry(key){
+      match hm.entry(key) {
          Occupied(mut vec) => vec.get_mut().push(tuple_index),
-         Vacant(vacant) => {vacant.insert(vec![tuple_index]);},
+         Vacant(vacant) => {
+            vacant.insert(vec![tuple_index]);
+         }
       }
       // hm.entry(key).or_default().push(tuple_index);
       // unsafe {
@@ -90,12 +100,12 @@ impl RelIndexTrait for RelNoIndexType {
    }
 }
 
-impl<K: Eq + Hash> RelIndexTrait for LatticeIndexType<K>{
+impl<K: Eq + Hash> RelIndexTrait for LatticeIndexType<K> {
    type Key = K;
 
    #[inline(always)]
    fn move_index_contents(hm1: &mut LatticeIndexType<K>, hm2: &mut LatticeIndexType<K>) {
-      for (k,v) in hm1.drain(){
+      for (k, v) in hm1.drain() {
          let set = hm2.entry(k).or_default();
          set.extend(v);
       }
@@ -107,11 +117,13 @@ impl<K: Eq + Hash> RelIndexTrait for LatticeIndexType<K>{
    }
 }
 
-pub static mut MOVE_FULL_INDEX_CONTENTS_TOTAL_TIME : Duration = Duration::ZERO;
-impl<K: Eq + Hash> RelIndexTrait for HashBrownRelFullIndexType<K>{
-    type Key = K;
+#[cfg(feature = "profiling")]
+pub static mut MOVE_FULL_INDEX_CONTENTS_TOTAL_TIME: Duration = Duration::ZERO;
+impl<K: Eq + Hash> RelIndexTrait for HashBrownRelFullIndexType<K> {
+   type Key = K;
 
    fn move_index_contents(from: &mut Self, to: &mut Self) {
+      #[cfg(feature = "profiling")]
       let before = Instant::now();
       if from.len() > to.len() {
          std::mem::swap(from, to);
@@ -121,28 +133,31 @@ impl<K: Eq + Hash> RelIndexTrait for HashBrownRelFullIndexType<K>{
          // to.raw_entry_mut().from_hash(42, |x| x == &k).insert(k, v);
          to.insert(k, v); // TODO could be improved
       }
+      #[cfg(feature = "profiling")]
       unsafe {
          MOVE_FULL_INDEX_CONTENTS_TOTAL_TIME += before.elapsed();
       }
-
    }
 
    #[inline(always)]
    fn index_insert(hm: &mut Self, key: Self::Key, tuple_index: usize) {
       hm.insert(key, tuple_index);
       // TODO undo this
-      // assert!(hm.insert(key, tuple_index).is_none(), 
+      // assert!(hm.insert(key, tuple_index).is_none(),
       //    "inserting duplicate index into RelFullIndexType, index:{}", tuple_index);
    }
 }
 
-impl <K: Clone + Hash + Eq> RelFullIndexTrait for HashBrownRelFullIndexType<K> {
+impl<K: Clone + Hash + Eq> RelFullIndexTrait for HashBrownRelFullIndexType<K> {
    type Key = K;
    #[inline]
    fn insert_if_not_present(&mut self, key: &Self::Key, v: usize) -> bool {
       match self.raw_entry_mut().from_key(key) {
          hashbrown::hash_map::RawEntryMut::Occupied(_) => false,
-         hashbrown::hash_map::RawEntryMut::Vacant(vacant) => {vacant.insert(key.clone(), v); true},
+         hashbrown::hash_map::RawEntryMut::Vacant(vacant) => {
+            vacant.insert(key.clone(), v);
+            true
+         }
       }
       // match hm.entry(key) {
       //    Occupied(_) => false,
@@ -151,26 +166,34 @@ impl <K: Clone + Hash + Eq> RelFullIndexTrait for HashBrownRelFullIndexType<K> {
    }
 }
 
-
 /// type constraints for relation columns
-pub struct TypeConstraints<T> where T : Clone + Eq + Hash{_t: ::core::marker::PhantomData<T>}
+pub struct TypeConstraints<T>
+where
+   T: Clone + Eq + Hash,
+{
+   _t: ::core::marker::PhantomData<T>,
+}
 /// type constraints for a lattice
-pub struct LatTypeConstraints<T> where T : Clone + Eq + Hash + Lattice{_t: ::core::marker::PhantomData<T>}
+pub struct LatTypeConstraints<T>
+where
+   T: Clone + Eq + Hash + Lattice,
+{
+   _t: ::core::marker::PhantomData<T>,
+}
 
 #[inline(always)]
-pub fn comment(_: &str){}
-
+pub fn comment(_: &str) {}
 
 #[inline]
 pub fn rel_ind_val_option_to_iter<'a>(val_option: Option<&'a Vec<usize>>) -> std::slice::Iter<'a, usize> {
    match val_option {
       Some(v) => v.iter(),
-      None => [].iter()
+      None => [].iter(),
    }
 }
 
 #[inline(always)]
-pub fn rel_full_ind_val_option_to_iter<'a>(val_option: Option<&'a usize>) -> std::option::IntoIter<&'a usize>  {
+pub fn rel_full_ind_val_option_to_iter<'a>(val_option: Option<&'a usize>) -> std::option::IntoIter<&'a usize> {
    val_option.into_iter()
 }
 
